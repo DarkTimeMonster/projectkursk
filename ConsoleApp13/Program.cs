@@ -107,14 +107,14 @@ namespace JockeyRaces
                                 {
                                     case "1":
                                         Console.Write("Введите имя владельца: ");
-                                        RemoveHorse(horses, Console.ReadLine());
+                                        RemoveHorse(horses, Console.ReadLine(), races);
                                         break;
                                     case "2":
                                         Console.Write("Введите ID жокея: ");
                                         try
                                         {
                                             int jockeyId = int.Parse(Console.ReadLine());
-                                            RemoveJockey(jockeys, jockeyId);
+                                            RemoveJockey(jockeys, jockeyId, races);
                                         }
                                         catch (FormatException)
                                         {
@@ -134,19 +134,18 @@ namespace JockeyRaces
                             bool selecting = true;
                             while (selecting)
                             { 
-                            Console.WriteLine("\n--- Запросы ---");
-                            Console.WriteLine("1. Призёры на дату");
-                            Console.WriteLine("2. Скачки по лошади");
-                            Console.WriteLine("3. Скачки по жокею");
-                            Console.WriteLine("4. Лошадь с наибольшим числом призов");
-                            Console.WriteLine("5. Жокей с наибольшим числом призов");
-                            Console.WriteLine("6. Самый популярный ипподром");
-                            Console.WriteLine("0. Назад");
-                            Console.Write("Выберите: ");
-                            string selectingAdd = Console.ReadLine();
-                            Console.Clear();
+                                Console.WriteLine("\n--- Запросы ---");
+                                Console.WriteLine("1. Призёры на дату");
+                                Console.WriteLine("2. Скачки по лошади");
+                                Console.WriteLine("3. Скачки по жокею");
+                                Console.WriteLine("4. Лошадь с наибольшим числом призов");
+                                Console.WriteLine("5. Жокей с наибольшим числом призов");
+                                Console.WriteLine("6. Самый популярный ипподром");
+                                Console.WriteLine("0. Назад");
+                                Console.Write("Выберите: ");
+                                string selectingAdd = Console.ReadLine();
+                                Console.Clear();
 
-                            
                                 switch (selectingAdd)
                                 {
                                     case "1":
@@ -160,7 +159,6 @@ namespace JockeyRaces
                                         {
                                             Console.WriteLine("Неверный формат даты.");
                                         }
-
                                         break;
                                     case "2":
                                         Console.Write("Введите ID лошади: ");
@@ -173,7 +171,6 @@ namespace JockeyRaces
                                         {
                                             Console.WriteLine("Неверный формат ID.");
                                         }
-
                                         break;
                                     case "3":
                                         Console.Write("Введите ID жокея: ");
@@ -186,7 +183,6 @@ namespace JockeyRaces
                                         {
                                             Console.WriteLine("Неверный формат ID.");
                                         }
-
                                         break;
                                     case "4":
                                         TopHorse(races, horses);
@@ -205,10 +201,7 @@ namespace JockeyRaces
                                         break;
                                 }
                             }
-
                             break;
-                            
-
                         case "0":
                             try
                             {
@@ -306,7 +299,7 @@ namespace JockeyRaces
 
                 var options = new JsonSerializerOptions
                 {
-                    PropertyNameCaseInsensitive = true, // Игнорировать регистр при чтении
+                    PropertyNameCaseInsensitive = true,
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase
                 };
 
@@ -323,6 +316,65 @@ namespace JockeyRaces
             }
         }
 
+        // ----- Вспомогательная функция для получения минимального доступного ID -----
+        static int GetNextAvailableId<T>(List<T> list, Func<T, int> idSelector)
+        {
+            var usedIds = list.Select(idSelector).OrderBy(id => id).ToList();
+            int nextId = 1;
+            foreach (var id in usedIds)
+            {
+                if (id > nextId)
+                    break;
+                if (id == nextId)
+                    nextId++;
+            }
+            return nextId;
+        }
+
+        // ----- Вспомогательная функция для перенумерации ID -----
+        static void RenumberIds<T>(List<T> list, Func<T, int> idSelector, Action<T, int> idSetter, List<Race> races, Action<RaceResult, int> resultIdSetter)
+        {
+            // Создаем словарь для сопоставления старых ID с новыми
+            var idMap = new Dictionary<int, int>();
+            int newId = 1;
+            foreach (var item in list.OrderBy(idSelector))
+            {
+                int oldId = idSelector(item);
+                idMap[oldId] = newId;
+                idSetter(item, newId);
+                newId++;
+            }
+
+            // Обновляем ID в результатах скачек
+            foreach (var race in races)
+            {
+                foreach (var result in race.Results)
+                {
+                    if (idMap.ContainsKey(resultIdSelector(result)))
+                    {
+                        resultIdSetter(result, idMap[resultIdSelector(result)]);
+                    }
+                }
+            }
+        }
+
+        private static int resultIdSelector(RaceResult result)
+        {
+            throw new NotImplementedException();
+        }
+
+        static int resultIdSelector(RaceResult result, string type)
+        {
+            return type == "horse" ? result.HorseId : result.JockeyId;
+        }
+
+        static void resultIdSetter(RaceResult result, int newId, string type)
+        {
+            if (type == "horse")
+                result.HorseId = newId;
+            else
+                result.JockeyId = newId;
+        }
 
         // ----- Функции -----
         static void AddHorse(List<Horse> horses)
@@ -350,7 +402,7 @@ namespace JockeyRaces
                 if (string.IsNullOrWhiteSpace(horse.Owner))
                     throw new Exception("Владелец не может быть пустым.");
 
-                horse.Id = horses.Any() ? horses.Max(h => h.Id) + 1 : 1;
+                horse.Id = GetNextAvailableId(horses, h => h.Id);
                 horses.Add(horse);
                 Console.WriteLine("Лошадь добавлена.");
             }
@@ -364,15 +416,25 @@ namespace JockeyRaces
             }
         }
 
-        static void RemoveHorse(List<Horse> horses, string owner)
+        static void RemoveHorse(List<Horse> horses, string owner, List<Race> races)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(owner))
                     throw new Exception("Имя владельца не может быть пустым.");
 
+                // Удаляем результаты скачек для удаляемых лошадей
+                var removedHorseIds = horses.Where(h => h.Owner == owner).Select(h => h.Id).ToList();
+                foreach (var race in races)
+                {
+                    race.Results.RemoveAll(r => removedHorseIds.Contains(r.HorseId));
+                }
+
                 int count = horses.RemoveAll(h => h.Owner == owner);
                 Console.WriteLine($"Удалено лошадей: {count}");
+
+                // Перенумеровываем ID лошадей и обновляем RaceResult
+                RenumberIds(horses, h => h.Id, (h, id) => h.Id = id, races, (r, id) => r.HorseId = id);
             }
             catch (Exception ex)
             {
@@ -588,7 +650,7 @@ namespace JockeyRaces
                 if (jockey.Age <= 0)
                     throw new Exception("Возраст должен быть положительным.");
 
-                jockey.Id = jockeys.Any() ? jockeys.Max(j => j.Id) + 1 : 1;
+                jockey.Id = GetNextAvailableId(jockeys, j => j.Id);
                 jockeys.Add(jockey);
                 Console.WriteLine("Жокей добавлен.");
             }
@@ -602,12 +664,21 @@ namespace JockeyRaces
             }
         }
 
-        static void RemoveJockey(List<Jockey> jockeys, int id)
+        static void RemoveJockey(List<Jockey> jockeys, int id, List<Race> races)
         {
             try
             {
+                // Удаляем результаты скачек для удаляемого жокея
+                foreach (var race in races)
+                {
+                    race.Results.RemoveAll(r => r.JockeyId == id);
+                }
+
                 int removed = jockeys.RemoveAll(j => j.Id == id);
                 Console.WriteLine(removed > 0 ? "Жокей удалён." : "Жокей не найден.");
+
+                // Перенумеровываем ID жокеев и обновляем RaceResult
+                RenumberIds(jockeys, j => j.Id, (j, newId) => j.Id = newId, races, (r, newId) => r.JockeyId = newId);
             }
             catch (Exception ex)
             {
@@ -620,7 +691,7 @@ namespace JockeyRaces
             try
             {
                 Race race = new Race();
-                race.Id = races.Any() ? races.Max(r => r.Id) + 1 : 1;
+                race.Id = GetNextAvailableId(races, r => r.Id);
 
                 Console.Write("Название: ");
                 race.Name = Console.ReadLine();
